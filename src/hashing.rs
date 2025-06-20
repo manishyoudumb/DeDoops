@@ -5,7 +5,7 @@ use blake3;
 use xxhash_rust::xxh3::Xxh3;
 use rayon::prelude::*;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum HashAlgorithm {
     Sha256,
     Blake3,
