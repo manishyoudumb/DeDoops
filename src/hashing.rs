@@ -79,6 +79,22 @@ pub fn hash_file_blake3(path: &str) -> std::io::Result<Vec<u8>> {
     Ok(hasher.finalize().as_bytes().to_vec())
 }
 
+pub fn hash_file_xxhash3(path: &str) -> std::io::Result<Vec<u8>> {
+    use xxhash_rust::xxh3::Xxh3;
+    use std::fs::File;
+    use std::io::{BufReader, Read};
+    let file = File::open(path)?;
+    let mut reader = BufReader::new(file);
+    let mut hasher = Xxh3::new();
+    let mut buffer = [0u8; 8192];
+    loop {
+        let n = reader.read(&mut buffer)?;
+        if n == 0 { break; }
+        hasher.update(&buffer[..n]);
+    }
+    Ok(hasher.digest().to_le_bytes().to_vec())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,7 +122,17 @@ mod tests {
         let mut file = NamedTempFile::new().unwrap();
         write!(file, "hello world").unwrap();
         let hash = hash_file_blake3(file.path().to_str().unwrap()).unwrap();
-        let expected = hex::decode("e167f68d2b2c1f0debafaf1b1b6c890bd1e3a3a2b6b8e176b6c6d2a3a0a1ec09").unwrap();
+        let expected = hex::decode("d74981efa70a0c880b8d8c1985d075dbcbf679b99a5f9914e5aaf96b831a9e24").unwrap();
+        assert_eq!(hash, expected);
+    }
+
+    #[test]
+    fn test_hash_file_xxhash3() {
+        let mut file = NamedTempFile::new().unwrap();
+        write!(file, "hello world").unwrap();
+        let hash = hash_file_xxhash3(file.path().to_str().unwrap()).unwrap();
+        // xxHash3 64-bit of "hello world"
+        let expected = vec![0x8b, 0x98, 0xe6, 0x40, 0xea, 0xb1, 0x47, 0xd4];
         assert_eq!(hash, expected);
     }
 }
