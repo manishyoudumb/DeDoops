@@ -23,13 +23,28 @@ pub struct App {
 
 }
 
-fn collect_files_recursively_with_filter<P: AsRef<Path>>(root: P, exts: Option<&Vec<String>>) -> Vec<String> {
+fn parse_size_arg(arg: &str) -> Option<u64> {
+    arg.parse::<u64>().ok()
+}
+
+fn collect_files_recursively_with_filter<P: AsRef<Path>>(root: P, exts: Option<&Vec<String>>, min_size: Option<u64>, max_size: Option<u64>) -> Vec<String> {
     let mut files = Vec::new();
     let debug = std::env::var("DEDOOPS_DEBUG").ok().as_deref() == Some("1");
     let walker = walkdir::WalkDir::new(root).into_iter();
     for entry in walker {
         if let Ok(e) = entry {
             if e.file_type().is_file() {
+                let meta = e.metadata().ok();
+                let size_ok = meta.map(|m| {
+                    let len = m.len();
+                    (min_size.map_or(true, |min| len >= min)) && (max_size.map_or(true, |max| len <= max))
+                }).unwrap_or(false);
+                if !size_ok {
+                    if debug {
+                        println!("[DEBUG] Skipping file (size): {:?}", e.path());
+                    }
+                    continue;
+                }
                 if let Some(exts) = exts {
                     if let Some(ext) = e.path().extension().and_then(|s| s.to_str()) {
                         if debug {
@@ -56,7 +71,7 @@ fn collect_files_recursively_with_filter<P: AsRef<Path>>(root: P, exts: Option<&
 pub fn run() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
-        eprintln!("Usage: {} <sha256|blake3|xxhash3> <file|dir|drive> [file2 ...] [--filetypes=ext1,ext2]", args[0]);
+        eprintln!("Usage: {} <sha256|blake3|xxhash3> <file|dir|drive> [file2 ...] [--filetypes=ext1,ext2] [--min-size=BYTES] [--max-size=BYTES]", args[0]);
         return;
     }
     let algo = match args[1].as_str() {
@@ -68,18 +83,26 @@ pub fn run() {
             return;
         }
     };
-    // Parse filetypes from --filetypes=ext1,ext2 if present
+    // Parse filetypes and size filters
     let mut filetypes: Option<Vec<String>> = None;
+    let mut min_size: Option<u64> = None;
+    let mut max_size: Option<u64> = None;
     for arg in &args {
         if let Some(rest) = arg.strip_prefix("--filetypes=") {
             filetypes = Some(rest.split(',').map(|s| s.trim().to_string()).collect());
+        }
+        if let Some(rest) = arg.strip_prefix("--min-size=") {
+            min_size = parse_size_arg(rest);
+        }
+        if let Some(rest) = arg.strip_prefix("--max-size=") {
+            max_size = parse_size_arg(rest);
         }
     }
     let mut files: Vec<String> = Vec::new();
     let scan_target;
     if Path::new(&args[2]).is_dir() {
         scan_target = format!("directory: {}", args[2]);
-        files = collect_files_recursively_with_filter(&args[2], filetypes.as_ref());
+        files = collect_files_recursively_with_filter(&args[2], filetypes.as_ref(), min_size, max_size);
     } else if Path::new(&args[2]).is_file() {
         scan_target = format!("file: {}", args[2]);
         files.push(args[2].clone());
@@ -100,6 +123,12 @@ pub fn run() {
     println!("Scanning {}", scan_target);
     if let Some(ref exts) = filetypes {
         println!("Filtering by file types: {:?}", exts);
+    }
+    if let Some(min) = min_size {
+        println!("Filtering by min size: {} bytes", min);
+    }
+    if let Some(max) = max_size {
+        println!("Filtering by max size: {} bytes", max);
     }
     println!("Files to process: {}\n", files.len());
     let pb = ProgressBar::new(files.len() as u64);
