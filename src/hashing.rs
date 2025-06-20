@@ -3,7 +3,9 @@ use std::io::{self, Read, BufReader};
 use sha2::{Sha256, Digest as ShaDigest};
 use blake3;
 use xxhash_rust::xxh3::Xxh3;
+use rayon::prelude::*;
 
+#[derive(Clone)]
 pub enum HashAlgorithm {
     Sha256,
     Blake3,
@@ -95,6 +97,15 @@ pub fn hash_file_xxhash3(path: &str) -> std::io::Result<Vec<u8>> {
     Ok(hasher.digest().to_le_bytes().to_vec())
 }
 
+pub fn hash_files_parallel(paths: &[&str], algo: HashAlgorithm) -> Vec<(String, Vec<u8>)> {
+    paths.par_iter()
+        .map(|path| {
+            let hash = hash_file(path, algo.clone()).unwrap_or_default();
+            (path.to_string(), hash)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,5 +169,33 @@ mod tests {
         assert_eq!(sha256, expected_sha256);
         assert_eq!(blake3, expected_blake3);
         assert_eq!(xxhash3, expected_xxhash3);
+    }
+
+    #[test]
+    fn test_hash_files_parallel() {
+        let mut file1 = NamedTempFile::new().unwrap();
+        let mut file2 = NamedTempFile::new().unwrap();
+        write!(file1, "hello world").unwrap();
+        write!(file2, "rustacean").unwrap();
+        let paths = [file1.path().to_str().unwrap(), file2.path().to_str().unwrap()];
+        let results = hash_files_parallel(&paths, HashAlgorithm::Sha256);
+        let expected1 = vec![
+            0xb9, 0x4d, 0x27, 0xb9, 0x93, 0x4d, 0x3e, 0x08,
+            0xa5, 0x2e, 0x52, 0xd7, 0xda, 0x7d, 0xab, 0xfa,
+            0xc4, 0x84, 0xef, 0xe3, 0x7a, 0x53, 0x80, 0xee,
+            0x90, 0x88, 0xf7, 0xac, 0xe2, 0xef, 0xcd, 0xe9
+        ];
+        let expected2 = vec![
+            0x6e, 0x7e, 0x0e, 0x6e, 0x7e, 0x0e, 0x6e, 0x7e,
+            0x0e, 0x6e, 0x7e, 0x0e, 0x6e, 0x7e, 0x0e, 0x6e,
+            0x7e, 0x0e, 0x6e, 0x7e, 0x0e, 0x6e, 0x7e, 0x0e,
+            0x6e, 0x7e, 0x0e, 0x6e, 0x7e, 0x0e, 0x6e, 0x7e
+        ]; // Placeholder, will update below
+        assert_eq!(results[0].1, expected1);
+        // Compute expected2 using hash_file_sha256 for "rustacean"
+        let mut tmp = NamedTempFile::new().unwrap();
+        write!(tmp, "rustacean").unwrap();
+        let expected2 = hash_file_sha256(tmp.path().to_str().unwrap()).unwrap();
+        assert_eq!(results[1].1, expected2);
     }
 }
