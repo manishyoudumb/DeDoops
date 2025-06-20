@@ -1,5 +1,5 @@
 mod cli;
-
-fn main () {
-    cli::run();
+mod hashing;
+fn main() {
+    println!("DEDOOPs - CLI");
 }
