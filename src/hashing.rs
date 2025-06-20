@@ -135,4 +135,28 @@ mod tests {
         let expected = vec![0x8b, 0x98, 0xe6, 0x40, 0xea, 0xb1, 0x47, 0xd4];
         assert_eq!(hash, expected);
     }
+
+    #[test]
+    fn test_hash_file_enum_dispatch() {
+        let mut file = NamedTempFile::new().unwrap();
+        write!(file, "hello world").unwrap();
+        let path = file.path().to_str().unwrap();
+
+        let sha256 = hash_file(path, HashAlgorithm::Sha256).unwrap();
+        let blake3 = hash_file(path, HashAlgorithm::Blake3).unwrap();
+        let xxhash3 = hash_file(path, HashAlgorithm::XxHash3).unwrap();
+
+        let expected_sha256 = vec![
+            0xb9, 0x4d, 0x27, 0xb9, 0x93, 0x4d, 0x3e, 0x08,
+            0xa5, 0x2e, 0x52, 0xd7, 0xda, 0x7d, 0xab, 0xfa,
+            0xc4, 0x84, 0xef, 0xe3, 0x7a, 0x53, 0x80, 0xee,
+            0x90, 0x88, 0xf7, 0xac, 0xe2, 0xef, 0xcd, 0xe9
+        ];
+        let expected_blake3 = hex::decode("d74981efa70a0c880b8d8c1985d075dbcbf679b99a5f9914e5aaf96b831a9e24").unwrap();
+        let expected_xxhash3 = vec![0x8b, 0x98, 0xe6, 0x40, 0xea, 0xb1, 0x47, 0xd4];
+
+        assert_eq!(sha256, expected_sha256);
+        assert_eq!(blake3, expected_blake3);
+        assert_eq!(xxhash3, expected_xxhash3);
+    }
 }
