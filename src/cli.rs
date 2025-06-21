@@ -8,6 +8,7 @@ use std::path::Path;
 use walkdir;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::time::{SystemTime, UNIX_EPOCH};
+use regex::Regex;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -32,7 +33,7 @@ fn parse_age_arg(arg: &str) -> Option<u64> {
     arg.parse::<u64>().ok()
 }
 
-fn collect_files_recursively_with_filter<P: AsRef<Path>>(root: P, exts: Option<&Vec<String>>, min_size: Option<u64>, max_size: Option<u64>, min_age: Option<u64>, max_age: Option<u64>) -> Vec<String> {
+fn collect_files_recursively_with_filter<P: AsRef<Path>>(root: P, exts: Option<&Vec<String>>, min_size: Option<u64>, max_size: Option<u64>, min_age: Option<u64>, max_age: Option<u64>, regex_filter: Option<&Regex>) -> Vec<String> {
     let mut files = Vec::new();
     let debug = std::env::var("DEDOOPS_DEBUG").ok().as_deref() == Some("1");
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
@@ -54,7 +55,11 @@ fn collect_files_recursively_with_filter<P: AsRef<Path>>(root: P, exts: Option<&
                 let age_ok = meta.as_ref().map(|m| {
                     if let Ok(modified) = m.modified() {
                         if let Ok(modified_secs) = modified.duration_since(UNIX_EPOCH) {
-                            let age_secs = now - modified_secs.as_secs();
+                            let age_secs = if now >= modified_secs.as_secs() {
+                                now - modified_secs.as_secs()
+                            } else {
+                                0 // treat future files as age 0 days
+                            };
                             let age_days = age_secs / 86400;
                             (min_age.map_or(true, |min| age_days >= min)) && (max_age.map_or(true, |max| age_days <= max))
                         } else {
@@ -70,13 +75,22 @@ fn collect_files_recursively_with_filter<P: AsRef<Path>>(root: P, exts: Option<&
                     }
                     continue;
                 }
+                let path_str = e.path().to_string_lossy();
+                if let Some(re) = regex_filter {
+                    if !re.is_match(&path_str) {
+                        if debug {
+                            println!("[DEBUG] Skipping file (regex): {:?}", e.path());
+                        }
+                        continue;
+                    }
+                }
                 if let Some(exts) = exts {
                     if let Some(ext) = e.path().extension().and_then(|s| s.to_str()) {
                         if debug {
                             println!("[DEBUG] Checking file: {:?}, ext: {:?}", e.path(), ext);
                         }
                         if exts.iter().any(|x| x.eq_ignore_ascii_case(ext)) {
-                            files.push(e.path().to_string_lossy().to_string());
+                            files.push(path_str.to_string());
                         }
                     } else if debug {
                         println!("[DEBUG] Skipping file (no ext): {:?}", e.path());
@@ -85,7 +99,7 @@ fn collect_files_recursively_with_filter<P: AsRef<Path>>(root: P, exts: Option<&
                     if debug {
                         println!("[DEBUG] Including file: {:?}", e.path());
                     }
-                    files.push(e.path().to_string_lossy().to_string());
+                    files.push(path_str.to_string());
                 }
             }
         }
@@ -96,7 +110,7 @@ fn collect_files_recursively_with_filter<P: AsRef<Path>>(root: P, exts: Option<&
 pub fn run() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
-        eprintln!("Usage: {} <sha256|blake3|xxhash3> <file|dir|drive> [file2 ...] [--filetypes=ext1,ext2] [--min-size=BYTES] [--max-size=BYTES] [--min-age=DAYS] [--max-age=DAYS]", args[0]);
+        eprintln!("Usage: {} <sha256|blake3|xxhash3> <file|dir|drive> [file2 ...] [--filetypes=ext1,ext2] [--min-size=BYTES] [--max-size=BYTES] [--min-age=DAYS] [--max-age=DAYS] [--regex=PATTERN]", args[0]);
         return;
     }
     let algo = match args[1].as_str() {
@@ -108,12 +122,13 @@ pub fn run() {
             return;
         }
     };
-    // Parse filetypes, size filters, and age filters
+    // Parse filetypes, size filters, age filters, and regex filter
     let mut filetypes: Option<Vec<String>> = None;
     let mut min_size: Option<u64> = None;
     let mut max_size: Option<u64> = None;
     let mut min_age: Option<u64> = None;
     let mut max_age: Option<u64> = None;
+    let mut regex_filter: Option<Regex> = None;
     for arg in &args {
         if let Some(rest) = arg.strip_prefix("--filetypes=") {
             filetypes = Some(rest.split(',').map(|s| s.trim().to_string()).collect());
@@ -130,12 +145,20 @@ pub fn run() {
         if let Some(rest) = arg.strip_prefix("--max-age=") {
             max_age = parse_age_arg(rest);
         }
+        if let Some(rest) = arg.strip_prefix("--regex=") {
+            if let Ok(re) = Regex::new(rest) {
+                regex_filter = Some(re);
+            } else {
+                eprintln!("Invalid regex pattern: {}", rest);
+                return;
+            }
+        }
     }
     let mut files: Vec<String> = Vec::new();
     let scan_target;
     if Path::new(&args[2]).is_dir() {
         scan_target = format!("directory: {}", args[2]);
-        files = collect_files_recursively_with_filter(&args[2], filetypes.as_ref(), min_size, max_size, min_age, max_age);
+        files = collect_files_recursively_with_filter(&args[2], filetypes.as_ref(), min_size, max_size, min_age, max_age, regex_filter.as_ref());
     } else if Path::new(&args[2]).is_file() {
         scan_target = format!("file: {}", args[2]);
         files.push(args[2].clone());
@@ -168,6 +191,9 @@ pub fn run() {
     }
     if let Some(max) = max_age {
         println!("Filtering by max age: {} days", max);
+    }
+    if let Some(ref re) = regex_filter {
+        println!("Filtering by regex: {}", re);
     }
     println!("Files to process: {}\n", files.len());
     let pb = ProgressBar::new(files.len() as u64);
