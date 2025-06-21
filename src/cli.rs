@@ -7,6 +7,7 @@ use std::fs;
 use std::path::Path;
 use walkdir;
 use indicatif::{ProgressBar, ProgressStyle};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -27,21 +28,45 @@ fn parse_size_arg(arg: &str) -> Option<u64> {
     arg.parse::<u64>().ok()
 }
 
-fn collect_files_recursively_with_filter<P: AsRef<Path>>(root: P, exts: Option<&Vec<String>>, min_size: Option<u64>, max_size: Option<u64>) -> Vec<String> {
+fn parse_age_arg(arg: &str) -> Option<u64> {
+    arg.parse::<u64>().ok()
+}
+
+fn collect_files_recursively_with_filter<P: AsRef<Path>>(root: P, exts: Option<&Vec<String>>, min_size: Option<u64>, max_size: Option<u64>, min_age: Option<u64>, max_age: Option<u64>) -> Vec<String> {
     let mut files = Vec::new();
     let debug = std::env::var("DEDOOPS_DEBUG").ok().as_deref() == Some("1");
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
     let walker = walkdir::WalkDir::new(root).into_iter();
     for entry in walker {
         if let Ok(e) = entry {
             if e.file_type().is_file() {
                 let meta = e.metadata().ok();
-                let size_ok = meta.map(|m| {
+                let size_ok = meta.as_ref().map(|m| {
                     let len = m.len();
                     (min_size.map_or(true, |min| len >= min)) && (max_size.map_or(true, |max| len <= max))
                 }).unwrap_or(false);
                 if !size_ok {
                     if debug {
                         println!("[DEBUG] Skipping file (size): {:?}", e.path());
+                    }
+                    continue;
+                }
+                let age_ok = meta.as_ref().map(|m| {
+                    if let Ok(modified) = m.modified() {
+                        if let Ok(modified_secs) = modified.duration_since(UNIX_EPOCH) {
+                            let age_secs = now - modified_secs.as_secs();
+                            let age_days = age_secs / 86400;
+                            (min_age.map_or(true, |min| age_days >= min)) && (max_age.map_or(true, |max| age_days <= max))
+                        } else {
+                            true
+                        }
+                    } else {
+                        true
+                    }
+                }).unwrap_or(false);
+                if !age_ok {
+                    if debug {
+                        println!("[DEBUG] Skipping file (age): {:?}", e.path());
                     }
                     continue;
                 }
@@ -71,7 +96,7 @@ fn collect_files_recursively_with_filter<P: AsRef<Path>>(root: P, exts: Option<&
 pub fn run() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
-        eprintln!("Usage: {} <sha256|blake3|xxhash3> <file|dir|drive> [file2 ...] [--filetypes=ext1,ext2] [--min-size=BYTES] [--max-size=BYTES]", args[0]);
+        eprintln!("Usage: {} <sha256|blake3|xxhash3> <file|dir|drive> [file2 ...] [--filetypes=ext1,ext2] [--min-size=BYTES] [--max-size=BYTES] [--min-age=DAYS] [--max-age=DAYS]", args[0]);
         return;
     }
     let algo = match args[1].as_str() {
@@ -83,10 +108,12 @@ pub fn run() {
             return;
         }
     };
-    // Parse filetypes and size filters
+    // Parse filetypes, size filters, and age filters
     let mut filetypes: Option<Vec<String>> = None;
     let mut min_size: Option<u64> = None;
     let mut max_size: Option<u64> = None;
+    let mut min_age: Option<u64> = None;
+    let mut max_age: Option<u64> = None;
     for arg in &args {
         if let Some(rest) = arg.strip_prefix("--filetypes=") {
             filetypes = Some(rest.split(',').map(|s| s.trim().to_string()).collect());
@@ -97,12 +124,18 @@ pub fn run() {
         if let Some(rest) = arg.strip_prefix("--max-size=") {
             max_size = parse_size_arg(rest);
         }
+        if let Some(rest) = arg.strip_prefix("--min-age=") {
+            min_age = parse_age_arg(rest);
+        }
+        if let Some(rest) = arg.strip_prefix("--max-age=") {
+            max_age = parse_age_arg(rest);
+        }
     }
     let mut files: Vec<String> = Vec::new();
     let scan_target;
     if Path::new(&args[2]).is_dir() {
         scan_target = format!("directory: {}", args[2]);
-        files = collect_files_recursively_with_filter(&args[2], filetypes.as_ref(), min_size, max_size);
+        files = collect_files_recursively_with_filter(&args[2], filetypes.as_ref(), min_size, max_size, min_age, max_age);
     } else if Path::new(&args[2]).is_file() {
         scan_target = format!("file: {}", args[2]);
         files.push(args[2].clone());
@@ -130,6 +163,12 @@ pub fn run() {
     if let Some(max) = max_size {
         println!("Filtering by max size: {} bytes", max);
     }
+    if let Some(min) = min_age {
+        println!("Filtering by min age: {} days", min);
+    }
+    if let Some(max) = max_age {
+        println!("Filtering by max age: {} days", max);
+    }
     println!("Files to process: {}\n", files.len());
     let pb = ProgressBar::new(files.len() as u64);
     pb.set_style(ProgressStyle::with_template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}")
@@ -145,3 +184,4 @@ pub fn run() {
     pb.finish_with_message("done");
     println!("\nProcessed {} files.", results.len());
 }
+
