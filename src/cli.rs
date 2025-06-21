@@ -110,7 +110,7 @@ fn collect_files_recursively_with_filter<P: AsRef<Path>>(root: P, exts: Option<&
 pub fn run() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
-        eprintln!("Usage: {} <sha256|blake3|xxhash3> <file|dir|drive> [file2 ...] [--filetypes=ext1,ext2] [--min-size=BYTES] [--max-size=BYTES] [--min-age=DAYS] [--max-age=DAYS] [--regex=PATTERN]", args[0]);
+        eprintln!("Usage: {} <sha256|blake3|xxhash3> <file|dir|drive> [file2 ...] [--filetypes=ext1,ext2] [--min-size=BYTES] [--max-size=BYTES] [--min-age=DAYS] [--max-age=DAYS] [--regex=PATTERN] [--dry]", args[0]);
         return;
     }
     let algo = match args[1].as_str() {
@@ -122,13 +122,14 @@ pub fn run() {
             return;
         }
     };
-    // Parse filetypes, size filters, age filters, and regex filter
+    // Parse filetypes, size filters, age filters, regex filter, and dry-run
     let mut filetypes: Option<Vec<String>> = None;
     let mut min_size: Option<u64> = None;
     let mut max_size: Option<u64> = None;
     let mut min_age: Option<u64> = None;
     let mut max_age: Option<u64> = None;
     let mut regex_filter: Option<Regex> = None;
+    let mut dry_run = false;
     for arg in &args {
         if let Some(rest) = arg.strip_prefix("--filetypes=") {
             filetypes = Some(rest.split(',').map(|s| s.trim().to_string()).collect());
@@ -152,6 +153,9 @@ pub fn run() {
                 eprintln!("Invalid regex pattern: {}", rest);
                 return;
             }
+        }
+        if arg == "--dry" {
+            dry_run = true;
         }
     }
     let mut files: Vec<String> = Vec::new();
@@ -196,6 +200,14 @@ pub fn run() {
         println!("Filtering by regex: {}", re);
     }
     println!("Files to process: {}\n", files.len());
+    if dry_run {
+        println!("[DRY RUN] The following files would be processed:");
+        for f in &files {
+            println!("{}", f);
+        }
+        println!("\n[DRY RUN] {} files would be processed.", files.len());
+        return;
+    }
     let pb = ProgressBar::new(files.len() as u64);
     pb.set_style(ProgressStyle::with_template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}")
         .unwrap()
