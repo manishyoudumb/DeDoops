@@ -1,5 +1,4 @@
-# DeDoops
-
+# Decore
 **Oops, no more duplicates!**
 
 ## About

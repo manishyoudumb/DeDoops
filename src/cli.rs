@@ -9,6 +9,7 @@ use walkdir;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::time::{SystemTime, UNIX_EPOCH};
 use regex::Regex;
+use serde::Serialize;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -23,6 +24,12 @@ pub struct App {
     #[arg(short, long)]
     pub dir: Option<PathBuf>,
 
+}
+
+#[derive(Serialize)]
+struct FileHashReport {
+    file: String,
+    hash: String,
 }
 
 fn parse_size_arg(arg: &str) -> Option<u64> {
@@ -110,7 +117,7 @@ fn collect_files_recursively_with_filter<P: AsRef<Path>>(root: P, exts: Option<&
 pub fn run() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
-        eprintln!("Usage: {} <sha256|blake3|xxhash3> <file|dir|drive> [file2 ...] [--filetypes=ext1,ext2] [--min-size=BYTES] [--max-size=BYTES] [--min-age=DAYS] [--max-age=DAYS] [--regex=PATTERN] [--dry] [--quarantine-dir=PATH]", args[0]);
+        eprintln!("Usage: {} <sha256|blake3|xxhash3> <file|dir|drive> [file2 ...] [--filetypes=ext1,ext2] [--min-size=BYTES] [--max-size=BYTES] [--min-age=DAYS] [--max-age=DAYS] [--regex=PATTERN] [--dry] [--quarantine-dir=PATH] [--json-report=PATH]", args[0]);
         return;
     }
     let algo = match args[1].as_str() {
@@ -122,7 +129,6 @@ pub fn run() {
             return;
         }
     };
-    // Parse filetypes, size filters, age filters, regex filter, dry-run, and quarantine
     let mut filetypes: Option<Vec<String>> = None;
     let mut min_size: Option<u64> = None;
     let mut max_size: Option<u64> = None;
@@ -131,6 +137,7 @@ pub fn run() {
     let mut regex_filter: Option<Regex> = None;
     let mut dry_run = false;
     let mut quarantine_dir: Option<String> = None;
+    let mut json_report: Option<String> = None;
     for arg in &args {
         if let Some(rest) = arg.strip_prefix("--filetypes=") {
             filetypes = Some(rest.split(',').map(|s| s.trim().to_string()).collect());
@@ -160,6 +167,9 @@ pub fn run() {
         }
         if let Some(rest) = arg.strip_prefix("--quarantine-dir=") {
             quarantine_dir = Some(rest.to_string());
+        }
+        if let Some(rest) = arg.strip_prefix("--json-report=") {
+            json_report = Some(rest.to_string());
         }
     }
     let mut files: Vec<String> = Vec::new();
@@ -206,6 +216,9 @@ pub fn run() {
     if let Some(ref qdir) = quarantine_dir {
         println!("Quarantine directory: {}", qdir);
     }
+    if let Some(ref jpath) = json_report {
+        println!("JSON report: {}", jpath);
+    }
     println!("Files to process: {}\n", files.len());
     if dry_run {
         println!("[DRY RUN] The following files would be processed:");
@@ -238,12 +251,30 @@ pub fn run() {
         .progress_chars("##-"));
     let file_refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
     let mut results = Vec::with_capacity(files.len());
+    let mut report = Vec::with_capacity(files.len());
     for f in &file_refs {
         let hash = crate::hashing::hash_file(f, algo.clone()).unwrap_or_default();
-        results.push((f.to_string(), hash));
+        results.push((f.to_string(), hash.clone()));
+        if json_report.is_some() {
+            report.push(FileHashReport {
+                file: f.to_string(),
+                hash: hex::encode(hash),
+            });
+        }
         pb.inc(1);
     }
     pb.finish_with_message("done");
+    if let Some(ref jpath) = json_report {
+        if let Ok(json) = serde_json::to_string_pretty(&report) {
+            if let Err(e) = fs::write(jpath, json) {
+                eprintln!("Failed to write JSON report: {}", e);
+            } else {
+                println!("JSON report written to {}", jpath);
+            }
+        } else {
+            eprintln!("Failed to serialize JSON report");
+        }
+    }
     println!("\nProcessed {} files.", results.len());
 }
 

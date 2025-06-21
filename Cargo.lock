@@ -291,7 +291,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "dedoops"
+name = "dedcore"
 version = "0.1.0"
 dependencies = [
  "anyhow",
