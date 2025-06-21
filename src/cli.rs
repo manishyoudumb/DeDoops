@@ -42,7 +42,7 @@ fn parse_age_arg(arg: &str) -> Option<u64> {
 
 fn collect_files_recursively_with_filter<P: AsRef<Path>>(root: P, exts: Option<&Vec<String>>, min_size: Option<u64>, max_size: Option<u64>, min_age: Option<u64>, max_age: Option<u64>, regex_filter: Option<&Regex>) -> Vec<String> {
     let mut files = Vec::new();
-    let debug = std::env::var("DEDOOPS_DEBUG").ok().as_deref() == Some("1");
+    let debug = std::env::var("DEDCORE_DEBUG").ok().as_deref() == Some("1");
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
     let walker = walkdir::WalkDir::new(root).into_iter();
     for entry in walker {
@@ -117,7 +117,7 @@ fn collect_files_recursively_with_filter<P: AsRef<Path>>(root: P, exts: Option<&
 pub fn run() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
-        eprintln!("Usage: {} <sha256|blake3|xxhash3> <file|dir|drive> [file2 ...] [--filetypes=ext1,ext2] [--min-size=BYTES] [--max-size=BYTES] [--min-age=DAYS] [--max-age=DAYS] [--regex=PATTERN] [--dry] [--quarantine-dir=PATH] [--json-report=PATH]", args[0]);
+        eprintln!("Usage: {} <sha256|blake3|xxhash3> <file|dir|drive> [file2 ...] [--filetypes=ext1,ext2] [--min-size=BYTES] [--max-size=BYTES] [--min-age=DAYS] [--max-age=DAYS] [--regex=PATTERN] [--dry] [--quarantine-dir=PATH] [--json-report=PATH] [--html-report=PATH]", args[0]);
         return;
     }
     let algo = match args[1].as_str() {
@@ -138,6 +138,7 @@ pub fn run() {
     let mut dry_run = false;
     let mut quarantine_dir: Option<String> = None;
     let mut json_report: Option<String> = None;
+    let mut html_report: Option<String> = None;
     for arg in &args {
         if let Some(rest) = arg.strip_prefix("--filetypes=") {
             filetypes = Some(rest.split(',').map(|s| s.trim().to_string()).collect());
@@ -171,6 +172,9 @@ pub fn run() {
         if let Some(rest) = arg.strip_prefix("--json-report=") {
             json_report = Some(rest.to_string());
         }
+        if let Some(rest) = arg.strip_prefix("--html-report=") {
+            html_report = Some(rest.to_string());
+        }
     }
     let mut files: Vec<String> = Vec::new();
     let scan_target;
@@ -192,7 +196,7 @@ pub fn run() {
         eprintln!("No files found to hash.");
         return;
     }
-    println!("\n=== DEDOOPs File Hasher ===");
+    println!("\n=== DEDCORE File Hasher ===");
     println!("Algorithm: {:?}", algo);
     println!("Scanning {}", scan_target);
     if let Some(ref exts) = filetypes {
@@ -218,6 +222,9 @@ pub fn run() {
     }
     if let Some(ref jpath) = json_report {
         println!("JSON report: {}", jpath);
+    }
+    if let Some(ref hpath) = html_report {
+        println!("HTML report: {}", hpath);
     }
     println!("Files to process: {}\n", files.len());
     if dry_run {
@@ -255,7 +262,7 @@ pub fn run() {
     for f in &file_refs {
         let hash = crate::hashing::hash_file(f, algo.clone()).unwrap_or_default();
         results.push((f.to_string(), hash.clone()));
-        if json_report.is_some() {
+        if json_report.is_some() || html_report.is_some() {
             report.push(FileHashReport {
                 file: f.to_string(),
                 hash: hex::encode(hash),
@@ -273,6 +280,18 @@ pub fn run() {
             }
         } else {
             eprintln!("Failed to serialize JSON report");
+        }
+    }
+    if let Some(ref hpath) = html_report {
+        let mut html = String::from("<html><head><title>dedcore Report</title></head><body><h1>dedcore File Hash Report</h1><table border=1><tr><th>File</th><th>Hash</th></tr>");
+        for r in &report {
+            html.push_str(&format!("<tr><td>{}</td><td>{}</td></tr>", r.file, r.hash));
+        }
+        html.push_str("</table></body></html>");
+        if let Err(e) = fs::write(hpath, html) {
+            eprintln!("Failed to write HTML report: {}", e);
+        } else {
+            println!("HTML report written to {}", hpath);
         }
     }
     println!("\nProcessed {} files.", results.len());

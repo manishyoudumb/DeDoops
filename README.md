@@ -1,9 +1,9 @@
-# Decore
+# dedcore
 **Oops, no more duplicates!**
 
 ## About
 
-dedoops is an intelligent CLI tool for finding and removing duplicate and similar files.
+dedcore is an intelligent CLI tool for finding and removing duplicate and similar files.
 
 This project aims to provide a robust, safe, and feature-rich deduplication experience for power users and professionals.
 
