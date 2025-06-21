@@ -216,11 +216,20 @@ pub fn run() {
         return;
     }
     if let Some(ref qdir) = quarantine_dir {
-        println!("[QUARANTINE] The following files would be moved to quarantine:");
+        fs::create_dir_all(qdir).ok();
+        let mut moved = 0;
         for f in &files {
-            println!("{} -> {}/{}", f, qdir, Path::new(f).file_name().unwrap().to_string_lossy());
+            if let Some(fname) = Path::new(f).file_name() {
+                let dest = Path::new(qdir).join(fname);
+                if let Err(e) = fs::rename(f, &dest) {
+                    eprintln!("Failed to move {} to {}: {}", f, dest.display(), e);
+                } else {
+                    println!("{} -> {}", f, dest.display());
+                    moved += 1;
+                }
+            }
         }
-        println!("\n[QUARANTINE] {} files would be moved to quarantine.", files.len());
+        println!("\n{} files moved to quarantine.", moved);
         return;
     }
     let pb = ProgressBar::new(files.len() as u64);
